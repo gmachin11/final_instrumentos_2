@@ -1,0 +1,247 @@
+
+# Trabajo Practico Final - Gonzalo Machin
+
+## Evolucion de la Siniestralidad Urbana en Uruguay
+
+### Periodo 2013 - 2021
+
+El objetivo de este trabajo es estudiar la siniestralidad urbana en Uruguay, entender cuales son los patrones que afectan a esta y que lugares del pais son los que presentan una mayor inseguridad vial, ademas de entender la tendencia que ha tenido en este periodo.
+
+
+# Clear
+
+```{r}
+rm(list = ls())
+
+gc()
+```
+
+# Librarys
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(stringr)
+library(mapview)
+library(ggspatial)
+library(units)
+library(patchwork)
+library(geofacet)
+source("get_data_functions.R")
+library(here)
+library(hexbin)
+library(rayshader)
+```
+
+### Datasets
+
+Dataset sobre siniestros y personas afectadas extraido de la pagina de UNASEV
+
+Zonas Censales y poblacion pueden ser accedidos atraves de la pagina del Instituto Nacional de Estadistica (INE)
+
+```{r}
+Siniestros <- get_siniestros()
+Personas <- get_personas()
+Departamentos <- read_sf("Departamentos/departamentos_Polygons.shp")
+zonas_censales <- read_sf("zonas_censales/ine_seg_11.shp")
+poblacion <- read.csv("zonas_censales/personas_por_zona.csv")
+localidades <- read_sf("localidades/localidades_uruguay-polygon.shp")
+```
+
+Datasets Utilizados:
+
+Siniestros: Registros de todos los siniestros de transito en el pais durante el periodo 2013 y marzo 2022
+
+Personas: Registros de todas las personas afectadas en siniestros de transito durante el periodo 2013 y marzo 2022
+
+Departamentos: Shapefile con los limites departamentales
+
+Zonas Censales: Shapefile con las zonas censales correspondientes al ultimo censo nacional en 2011
+
+Poblacion: Poblacion por zona censal
+
+Localidades: Shapefile de las localidades de Uruguay
+
+
+## Poblacion y Zonas Censales
+
+### Limpieza de Datos y Armado de informacion a Analizar
+
+Para cruzar los datasets de poblacion y zonas censales es necesario crear una variable unica por segmento censal, dado que el shp de zonas censales no incluye la informacion de la poblacion
+
+```{r}
+poblacion <- poblacion %>%
+  mutate(CODSEG = ((DPTO*100000) + (SECC*1000) + SEGM)) %>%
+  select(CODSEG,Total)
+```
+
+```{r}
+zonas_censales <- zonas_censales %>%
+  left_join(poblacion,by = "CODSEG")
+
+sf_use_s2(FALSE)
+
+zonas_censales <- zonas_censales %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  mutate(Zonificacion = if_else(NOMBLOC == "RURAL","RURAL","URBANO")) %>%
+  st_set_crs(32721) %>%
+  st_transform(4326) %>%
+  mutate(Area_km2 = units::set_units(st_area(zonas_censales), km^2)) %>%
+  mutate(Area_km2 = sub(" [km^2].*","",Area_km2)) %>%
+  mutate(Area_km2 = as.numeric(Area_km2)) %>%
+  mutate(Densidad = Total/Area_km2)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+poblacion_depto <- zonas_censales %>%
+  st_set_geometry(NULL) %>%
+  group_by(NOMBDEPTO,
+           Zonificacion) %>%
+  summarise(Total = sum(Total)) %>%
+  pivot_wider(names_from = Zonificacion,values_from = Total) %>%
+  mutate(Porcentaje_urbano = URBANO/(URBANO+RURAL))
+
+depto <- zonas_censales %>%
+  group_by(NOMBDEPTO) %>%
+  summarise(Total = sum(Total))
+
+depto <- left_join(depto,poblacion_depto,by = "NOMBDEPTO")
+```
+
+### Distribucion de la poblacion nacional
+
+En la siguiente infografia se puede apreciar la poca superficie urbana que tiene el pais, pero tambien la concentracion urbana que tiene:
+
+```{r}
+options(scipen=1000000)
+
+gg_zonificacion <- ggplot()+
+  geom_sf(data = zonas_censales,aes(fill = Zonificacion), colour = NA)+
+  geom_sf(data = Departamentos,fill = NA)+
+  labs(title = "Zonificacion Urbana y Rural")+
+  theme_bw()+
+  theme(legend.position = "top",
+        legend.justification = "left")
+
+gg_urbana_depto <- ggplot()+
+  geom_sf(data = depto,aes(fill = Porcentaje_urbano))+
+  labs(title = "Porcentaje de Poblacion Urbana",
+       fill = "% Urbana")+
+  scale_fill_gradient(low="mistyrose1", high="firebrick2",labels = scales::percent)+
+  theme_bw()+
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank())+
+   theme(legend.position = "top",
+        legend.justification = "left")
+
+gg_zonificacion | gg_urbana_depto
+```
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 12, fig.height = 3)
+
+ggplot(zonas_censales %>%
+         st_set_geometry(NULL) %>%
+         group_by(Zonificacion) %>%
+         summarise(Total = sum(Total)))+
+  geom_bar(aes(y=Zonificacion,weight = Total,fill = Zonificacion))+
+  labs(y = "Zonif.",
+       x = "Poblacion")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+Planteando la hipotesis de que la poblacion uruguaya habita predominantemente en las ciudades es necesario investigar como la poblacion se ve afectada por la siniestralidad del transito, dado que este patron de ubicacion de la poblacion.
+
+## Siniestros
+
+Primero corregiriemos y filtraremos nuestro dataset para usarlo a posteriri para hacer los calculos pertinentes
+
+```{r}
+Siniestros  <- Siniestros %>%
+  mutate(anio = as.numeric(anio)) %>%
+  filter(anio <= 2021)
+```
+
+```{r}
+Siniestros <- st_join(Siniestros,zonas_censales)
+Siniestros <- st_join(Siniestros,Departamentos)
+```
+
+Observamos el total de siniestros por departamento tanto en zonas rurales como en zonas urbanas
+
+```{r}
+siniestros_depto_porcentaje <- Siniestros %>%
+  st_set_geometry(NULL) %>%
+  group_by(NOMBDEPTO,
+           Zonificacion) %>%
+  summarise(Total = sum(Total)) %>%
+  pivot_wider(names_from = Zonificacion,values_from = Total) %>%
+  mutate(Siniestros = URBANO+RURAL) %>%
+  mutate(Porcentaje_urbano = URBANO/(URBANO+RURAL)) %>%
+  filter(!is.na(NOMBDEPTO)) %>%
+  select(-'NA')
+
+depto <- left_join(depto,siniestros_depto_porcentaje,by = "NOMBDEPTO")
+```
+
+```{r}
+mygrid <- data.frame(
+  code = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+  name = c("Artigas", "Salto", "Rivera", "Cerro Largo", "Paysandu", "Tacuarembo", "Treinta y tres", "Durazno", "Rio Negro", "Rocha", "Florida", "Lavalleja", "Flores", "Soriano", "Canelones", "San Jose", "Colonia", "Maldonado", "Montevideo"),
+  row = c(1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6),
+  col = c(1, 1, 2, 3, 1, 2, 3, 2, 1, 4, 3, 4, 2, 1, 3, 2, 1, 4, 3),
+  stringsAsFactors = FALSE
+)
+```
+
+
+```{r}
+ggplot(Siniestros %>%
+  st_set_geometry(NULL) %>%
+  group_by(admlnm,
+           Zonificacion) %>%
+  summarise(Total = n()) %>%
+  filter(!is.na(admlnm),
+         !is.na(Zonificacion)))+
+  geom_bar(aes(y=Zonificacion,weight = Total,fill = Zonificacion))+
+  scale_x_continuous(breaks = seq(0,60000,30000))+
+  labs(title = "Siniestros por Departamento",
+       x = "Total")+
+  facet_geo(~admlnm,grid = mygrid)+
+  theme_bw()+
+  theme(axis.text = element_text(size = 6))+
+  theme(strip.text.x = element_text(size = 8))+
+  theme(legend.position = c(1, 0.77), legend.justification = c(1, 0))
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = depto,aes(fill = Porcentaje_urbano.y))+
+  labs(title = "Porcentaje de Siniestros en Zonas Urbanas",
+       fill = "% Urbanos")+
+  scale_fill_gradient(low="mistyrose1", high="firebrick2",labels = scales::percent)+
+  theme_bw()+
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank())+
+   theme(legend.position = "top",
+        legend.justification = "left")
+```
+
+```{r}
+ggplot(depto,aes(x=Porcentaje_urbano.x,y=Porcentaje_urbano.y))+
+  geom_point()+
+  geom_smooth(method=lm, se=FALSE, col='red', size=0.5)+
+  labs(title = "Porcentaje de Poblacion y Siniestros en Areas Urbanas",
+       y= "Porcentaje de Siniestros",
+       x="Porcentaje de Poblacion")+
+  scale_x_continuous(labels = scales::percent)+
+  scale_y_continuous(labels = scales::percent)+
+  theme_bw()
+```
+
