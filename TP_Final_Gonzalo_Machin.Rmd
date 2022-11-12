@@ -34,6 +34,7 @@ library(here)
 library(hexbin)
 library(rayshader)
 library(ggrepel)
+library(leaflet)
 ```
 
 ### Datasets
@@ -470,6 +471,40 @@ Ciudades <- left_join(Ciudades,Siniestros_Ciudades_Evolucion,by = "NOMBLOC")
 
 ```{r}
 Ciudades <- Ciudades %>%
-  mutate(Variacion_2021 = ((Total_2021-Total_2014)/Total_2014)*100)
+  mutate(Variacion_2021 = ((Total_2021-Total_2014)/Total_2014))
+```
+
+Ciudades que mas empeoraron en la cantidad de Siniestros desde 2014, unicamente se muestra aquellas ciudades que tuvieron mas siniestros en 2021 que en 2014.
+
+```{r}
+ggplot(Ciudades %>%
+         filter(Variacion_2021 > 0))+
+  geom_bar(aes(y=reorder(NOMBLOC,(Variacion_2021)),weight=Variacion_2021),fill = "#FF8A94")+
+  labs(title = "Ciudades que mas empeoraron su siniestralidad",
+       x="Variacion en porcentaje",
+       y="Localidad")+
+  scale_x_continuous(labels = scales::percent)+
+  theme_bw()
+```
+
+```{r}
+ggplot(Ciudades %>%
+         filter(Variacion_2021 < 0))+
+  geom_bar(aes(y=reorder(NOMBLOC,(-Variacion_2021)),weight=Variacion_2021),fill = "#A2FFB8")+
+  labs(title = "Ciudades que mas mejoraron su siniestralidad",
+       x="Variacion en porcentaje",
+       y="Localidad")+
+  scale_x_continuous(labels = scales::percent)+
+  theme_bw()
+```
+
+En total 28 ciudades registraron peores indicadores de siniestralidad en 2021, en su gran totalidad las ciudades que empeoraron se encuentran en el interior del pais y fuera del area metropolitana, lo cual puede referir a un atraso en las politicas de siniestralidad vial para el interior del pais, dado que Montevideo y varias ciudades del area metropolitana se encuentran dentro del grupo de las ciudades que mejoraron. Aun asi hay numeros que hablan de que aun se puede mejorar en varios indicadores, en especial en los de mortalidad donde aun se registran altos valores, si se toma a montevideo como ejemplo dado que aporta el mayor volumen el pais esta en un buen camino dado que ha logrado mejorar, pero lamentablemente no es el reflejo de muchas regiones del interior.
+
+Por ultimo, para mejorar la visualizacion se presenta el siguiente mapa interactivo, donde se pueden observar los datos de estas visualizaciones presentadas previamente.
+
+```{r}
+leaflet() %>%
+  addTiles() %>%
+  addPolygons(data = Ciudades,fillColor = Ciudades$Variacion_2021)
 ```
 
