@@ -7,6 +7,7 @@
 
 El objetivo de este trabajo es estudiar la siniestralidad urbana en Uruguay, entender cuales son los patrones que afectan a esta y que lugares del pais son los que presentan una mayor inseguridad vial, ademas de entender la tendencia que ha tenido en este periodo.
 
+Como pregunta se plantea estudiar la evolucion de la siniestralidad urbana en el pais y ver la evolucion de la misma en las ciudades del pais con mas de 5000 habitantes. Cuales son las ciudades con mas siniestros y cuales han logrado reducir en mayor medida los siniestros en el año 2021?
 
 # Clear
 
@@ -32,6 +33,7 @@ source("get_data_functions.R")
 library(here)
 library(hexbin)
 library(rayshader)
+library(ggrepel)
 ```
 
 ### Datasets
@@ -280,13 +282,194 @@ A prtir de este punto se trabajara con el total de siniestros cada 10.00 habitan
 
 ### Base Personas
 
-Join Espacial
+Join Espacial y filtro de ciudades a analizar
+
+Ciudades del Interior con Mas Siniestros, ya que es de conocimiento que Montevideo es la ciudad con mas Siniestros asi que se decide mostrar la cantidad de Siniestros en el resto del pais
+
+### Poblacion por ciudad
 
 ```{r}
-Personas <- st_join(Personas,zonas_censales)
+Ciudades <- zonas_censales %>%
+  filter(Zonificacion == "URBANO") %>%
+  group_by(NOMBLOC,
+           NOMBDEPTO,
+           ) %>%
+  summarise(Total = sum(Total))
 ```
 
 ```{r}
+Ciudades <- Ciudades %>%
+  filter(Total >= 5000)
+```
 
+En total Uruguay cuenta con 74 ciudades con una poblacion mayor a los 5000 habitantes, sera sobre estas que se hara el estudio de la evolucion y siniestralidad.
+
+```{r}
+Personas <- st_join(Personas,Ciudades)
+```
+
+```{r}
+Personas <- Personas %>%
+  filter(!is.na(NOMBLOC))
+```
+
+```{r}
+Siniestros_Ciudades <- get_siniestros()
+
+Siniestros_Ciudades <- st_join(Siniestros_Ciudades,Ciudades)
+```
+
+```{r}
+Siniestros_Ciudades <- Siniestros_Ciudades %>%
+  filter(!is.na(NOMBLOC))
+```
+
+Calculamos el total de Siniestros por Ciudad por Año
+
+```{r}
+Siniestros_Ciudades_Anual <- Siniestros_Ciudades %>%
+  st_set_geometry(NULL) %>%
+  group_by(NOMBLOC,
+           anio) %>%
+  summarise(Total = n()) %>%
+  filter(anio != 2022) %>%
+  mutate(anio = as.numeric(anio))
+```
+
+30 Ciudades con mas Siniestros:
+
+```{r}
+ggplot(Siniestros_Ciudades_Anual %>%
+         group_by(NOMBLOC,) %>%
+         summarise(Total = sum(Total)) %>%
+         top_n(n=30,Total))+
+  geom_bar(aes(y=reorder(NOMBLOC,(Total)),weight=Total),fill = "#FF8A94")+
+  labs(title =  "30 Ciudades con mas Siniestros",
+       y = "Localidad",
+       x = "Total de Siniestros 2013-2021")+
+  scale_x_continuous(breaks = seq(0,80000,10000))+
+  theme_bw()
+```
+
+Si bien el total como se anticipaba iba a ser predominante en la ciudad capital, ahora se presenta el mismo grafico pero en funcion de la poblacion.
+
+Para esto se utilizara el total de siniestros cada 10.000 habitantes para medir la siniestralidad, la cantidad de fallecidos cada 10.000 habitantes para medir la mortalidad y la cantidad de fallecidos cada 100 siniestros para medir la gravedad de los siniestros. 
+
+Calculo de tasas:
+
+```{r}
+Siniestros_Ciudades_Total <- Siniestros_Ciudades %>%
+  st_set_geometry(NULL) %>%
+  group_by(NOMBLOC) %>%
+  summarise(Total = n())
+```
+
+```{r}
+Ciudades <- left_join(Ciudades,Siniestros_Ciudades_Total,by = "NOMBLOC")
+
+Ciudades <- Ciudades %>%
+  rename(Habitantes = Total.x,
+         Siniestros = Total.y)
+```
+
+```{r}
+Ciudades <- Ciudades %>%
+  mutate(Siniestros_10000_hab = Siniestros/(Habitantes/10000))
+```
+
+```{r}
+Personas_Gravedad <- Personas %>%
+  st_set_geometry(NULL) %>%
+  mutate(anio = format(floor_date(Fecha,"year"),"%Y")) %>%
+  mutate(Mes = floor_date(Fecha,"month")) %>%
+  group_by(Gravedad,
+           anio) %>%
+  summarise(Total = n())
+```
+
+
+```{r}
+Personas_Ciudad_Total <- Personas %>%
+  st_set_geometry(NULL) %>%
+  mutate(Gravedad_Agrupado = if_else(Gravedad == "FALLECIDO EN CENTRO DE ASISTENCIA" | Gravedad == "FALLECIDO EN EL LUGAR","FATAL",Gravedad)) %>%
+  filter(Gravedad_Agrupado == "FATAL") %>%
+  group_by(NOMBLOC) %>%
+  summarise(Total = n())
+```
+
+
+```{r}
+Ciudades <- left_join(Ciudades,Personas_Ciudad_Total,by = "NOMBLOC")
+```
+
+```{r}
+Ciudades <- Ciudades %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  rename(Fallecidos = Total)
+```
+
+```{r}
+Ciudades <- Ciudades %>%
+  mutate(Fallecidos_10000_hab = Fallecidos/(Habitantes/10000)) %>%
+  mutate(Fallecidos_100_siniestros = Fallecidos/(Siniestros/100))
+```
+
+Siniestralidad y Mortabilidad Urbana
+
+```{r}
+ggplot(Ciudades,aes(x=Fallecidos_10000_hab,y=Siniestros_10000_hab,label = NOMBLOC))+
+  geom_point()+
+  geom_text_repel()+
+  labs(title = "Tasas de Siniestralidad y Mortabilidad",
+       y="Siniestros cada 10000 Habitantes en el Periodo 2013-2021",
+       x="Fallecidos cada 10000 Habitantes en el periodo 2013-2021")+
+  theme_bw()
+```
+
+En este grafico se observa la frecuencia de siniestros basadas en la poblacion y la fatalidad de los mismo, aca destaca Punta del Este siendo que la poblacion residente es muy baja pero al ser un lugar turistico la movilidad es mucho mas alta que ciudades de igual medida en otras partes del pais, haciendo que tengan tasas de siniestralidad muy elevadas.
+
+Ahora comparemos estos datos con la gravedad de los siniestros
+
+```{r}
+ggplot(Ciudades,aes(x=Fallecidos_10000_hab,y=Fallecidos_100_siniestros,label = NOMBLOC))+
+  geom_point()+
+  geom_text_repel()+
+  labs(title = "Tasas de Siniestralidad y Mortabilidad",
+       y="Siniestros cada 10000 Habitantes en el Periodo 2013-2021",
+       x="Fallecidos cada 10000 Habitantes en el periodo 2013-2021")+
+  theme_bw()
+```
+
+Como se puede apreciar ahora Punta del Este se encuentra en la otra parte del cuadro teniedo siniestros mas leves en promedio que otras ciudades mas residenciales o del area metropolitana de montevideo, donde se observa una alta tasa de fallecidos tanto en funcion de la poblacion de como el volumen de siniestros.
+
+Por ultimo, presentaremos la tendencia de la siniestralidad comparando los años 2014 y 2021 para ver que ciudades han mejorado la siniestralidad urbana y donde ha empeorado en este lapso, poniendo fin a nuestro analisis y respondiendo la pregunta planteada al inicio.
+
+Calculo de la tendencia
+
+```{r}
+Siniestros_Ciudades_Evolucion_2014 <- Siniestros_Ciudades %>%
+  st_set_geometry(NULL) %>%
+  filter(anio == 2014,
+         !is.na(NOMBLOC)) %>%
+  group_by(NOMBLOC) %>%
+  summarise(Total_2014 = n())
+
+Siniestros_Ciudades_Evolucion_2021 <- Siniestros_Ciudades %>%
+  st_set_geometry(NULL) %>%
+  filter(anio == 2021,
+         !is.na(NOMBLOC)) %>%
+  group_by(NOMBLOC) %>%
+  summarise(Total_2021 = n())
+
+Siniestros_Ciudades_Evolucion <- left_join(Siniestros_Ciudades_Evolucion_2014,Siniestros_Ciudades_Evolucion_2021,by = "NOMBLOC")
+```
+
+```{r}
+Ciudades <- left_join(Ciudades,Siniestros_Ciudades_Evolucion,by = "NOMBLOC")
+```
+
+```{r}
+Ciudades <- Ciudades %>%
+  mutate(Variacion_2021 = ((Total_2021-Total_2014)/Total_2014)*100)
 ```
 
