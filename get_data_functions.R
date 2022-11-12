@@ -185,7 +185,8 @@ get_personas <- function() {
     mutate(Dia_semana = sub(".*? ", "",Dia_semana)) %>%
     mutate(Departamento = sub(".*? ", "",Departamento)) %>%
     mutate(Localidad = sub(".*? ", "",Localidad)) %>%
-    mutate(Tipo_Vehiculo = sub(".*? ", "",Tipo_Vehiculo))
+    mutate(Tipo_Vehiculo = sub(".*? ", "",Tipo_Vehiculo)) %>%
+    mutate(Sexo = sub(".*? ", "",Sexo))
   
   Siniestros_Personas <- Siniestros_Personas %>%
     mutate(Edad = as.numeric(Edad)) %>%

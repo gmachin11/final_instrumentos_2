@@ -141,6 +141,8 @@ gg_urbana_depto <- ggplot()+
 gg_zonificacion | gg_urbana_depto
 ```
 
+Como se puede apreciar Montevideo y Maldonado son los departamentos con mayor porcentaje de poblacion viviendo en centro urbanos, mientras que ningun departamento del pais se ubica por debajo del 85% de la poblacion viviendo en centros urbanos
+
 ```{r}
 ggplot(zonas_censales %>%
          st_set_geometry(NULL) %>%
@@ -217,6 +219,10 @@ ggplot(Siniestros %>%
   theme(legend.position = c(1, 0.77), legend.justification = c(1, 0))
 ```
 
+Se puede apreciar que montevideo tambien es el departamento con mayor cantidad de siniestros, dado que esta cantidad esta altamente correlacionada con la poblacion del departamento.
+
+Debajo se puede apreciar la relacion de cuantos siniestros son es areas urbanas por departamento.
+
 ```{r}
 ggplot()+
   geom_sf(data = depto,aes(fill = Porcentaje_urbano.y))+
@@ -241,5 +247,46 @@ ggplot(depto,aes(x=Porcentaje_urbano.x,y=Porcentaje_urbano.y))+
   scale_x_continuous(labels = scales::percent)+
   scale_y_continuous(labels = scales::percent)+
   theme_bw()
+```
+
+Evolucion de los Siniestros en entronos rurales y urbanos
+
+```{r}
+ggplot(Siniestros %>%
+         group_by(anio,
+                  Zonificacion) %>%
+         summarise(Total = n()) %>%
+         filter(!is.na(Zonificacion)))+
+  geom_bar(aes(x=anio,weight=Total,fill=Zonificacion))+
+  labs(title = "Total de Siniestros por Entorno",
+       x = "Año",
+       y = "Total")+
+  facet_grid(~Zonificacion)+
+  scale_x_continuous(breaks = seq(2013,2021,2))+
+  scale_y_continuous(breaks = seq(0,25000,5000))+
+  theme_bw()+
+  theme(strip.text.x = element_text(size = 8))+
+  theme(legend.position = "top",
+        legend.justification = "left")
+```
+
+Los picos de siniestros en los ultimos 8 años se dan en años distintos, siendo 2014/5 para los urbanos y 2017/8 para los siniestros en zonas rurales, esta es una tendencia intersante en especial para entornos urbanos habla de una mejora favorable en la siniestralidad, acompañado de un pico muy bajo en 2020 gracias a la pandemia.
+
+Mientras que en el ultimo año 2021 se observo un leve crecimiento en relacion al año previo pero aun no se puede concluir nada hasta no tener los datos actualizados al año 2022.
+
+A continuacion se investigara que centros poblados tienen mayores indicadores de siniestralidad urbana y se observara la tendencia en estos.
+
+A prtir de este punto se trabajara con el total de siniestros cada 10.00 habitantes y tambien se trabajara con la base de personas para entender la fatalidad de estos siniestros.
+
+### Base Personas
+
+Join Espacial
+
+```{r}
+Personas <- st_join(Personas,zonas_censales)
+```
+
+```{r}
+
 ```
 
